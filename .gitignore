@@ -21,3 +21,5 @@ wheels/
 
 # Reports
 evals/reports/
+.env
+__pycache__/
