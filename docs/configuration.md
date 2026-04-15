@@ -23,16 +23,63 @@ cp .env.example .env.development
 
 ---
 
-## LLM
+## LLM Provider (Multi-provider support)
+
+The template now supports **OpenAI**, **Groq** (free tier), and **Google AI Studio** (free tier). Switch providers by changing `LLM_PROVIDER`.
 
 | Variable | Default | Required | Description |
 | --- | --- | --- | --- |
-| `OPENAI_API_KEY` | — | Yes | OpenAI API key |
-| `DEFAULT_LLM_MODEL` | `gpt-5-mini` | No | Starting model — see [LLM Service](llm-service.md) for fallback order |
+| `LLM_PROVIDER` | `openai` | No | Provider: `openai`, `groq`, or `google` |
+| `OPENAI_API_KEY` | — | Yes if `openai` | OpenAI API key |
+| `GROQ_API_KEY` | — | Yes if `groq` | Groq API key (free at https://console.groq.com) |
+| `GOOGLE_API_KEY` | — | Yes if `google` | Google AI Studio API key (free at https://aistudio.google.com) |
+| `DEFAULT_LLM_MODEL` | varies | No | Starting model for your provider (see below) |
 | `DEFAULT_LLM_TEMPERATURE` | `0.2` | No | Temperature for chat completions |
 | `MAX_TOKENS` | `2000` | No | Max tokens per LLM response |
 | `MAX_LLM_CALL_RETRIES` | `3` | No | Retries per model before switching to fallback |
 | `LLM_TOTAL_TIMEOUT` | `60` | No | Max seconds for the entire fallback loop |
+
+### Available Models by Provider
+
+**Groq (Free Tier):**
+- `llama-3.1-8b-instant` (fast, recommended default)
+- `llama-3.2-11b-vision-preview`
+- `llama-3.2-3b-preview`
+
+**Google AI Studio (Free Tier):**
+- `gemini-2.0-flash-exp` (recommended default)
+- `gemini-1.5-flash`
+
+**OpenAI:**
+- `gpt-4o-mini` (recommended default)
+- `gpt-4o`
+
+### Example Configurations
+
+**For Groq (Recommended - Free & Fast):**
+```bash
+LLM_PROVIDER=groq
+GROQ_API_KEY="your-groq-api-key"
+DEFAULT_LLM_MODEL=llama-3.1-8b-instant
+LONG_TERM_MEMORY_PROVIDER=groq
+LONG_TERM_MEMORY_MODEL=llama-3.1-8b-instant
+```
+
+**For Google AI Studio (Free):**
+```bash
+LLM_PROVIDER=google
+GOOGLE_API_KEY="your-google-api-key"
+DEFAULT_LLM_MODEL=gemini-2.0-flash-exp
+LONG_TERM_MEMORY_PROVIDER=google
+LONG_TERM_MEMORY_MODEL=gemini-2.0-flash-exp
+```
+
+**For OpenAI:**
+```bash
+LLM_PROVIDER=openai
+OPENAI_API_KEY="your-openai-api-key"
+DEFAULT_LLM_MODEL=gpt-4o-mini
+```
 
 ---
 
@@ -40,9 +87,12 @@ cp .env.example .env.development
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `LONG_TERM_MEMORY_PROVIDER` | same as `LLM_PROVIDER` | Provider for memory extraction (`openai`, `groq`, or `google`) |
 | `LONG_TERM_MEMORY_COLLECTION_NAME` | `longterm_memory` | pgvector collection name |
-| `LONG_TERM_MEMORY_MODEL` | `gpt-5-nano` | LLM used by mem0 to extract memories |
-| `LONG_TERM_MEMORY_EMBEDDER_MODEL` | `text-embedding-3-small` | Embedding model for semantic search |
+| `LONG_TERM_MEMORY_MODEL` | varies | LLM used by mem0 to extract memories (use appropriate model for your provider) |
+| `LONG_TERM_MEMORY_EMBEDDER_MODEL` | `text-embedding-3-small` | Embedding model for semantic search (OpenAI only) |
+
+**Note:** The embedder model currently requires OpenAI. If using Groq or Google for chat, you may still need an OpenAI API key for embeddings, or configure an alternative embedding provider in future updates.
 
 ---
 

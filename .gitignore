@@ -1,25 +1,53 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-*.jsonl
-
-# Virtual environments
-.venv
-
+```
 # Environment variables
 .env
-.env.development
-.env.staging
-.env.production
+.env.local
+.env.*
 
-# Misc
-*.ipynb
-
-# Reports
-evals/reports/
-.env
+# Dependencies
+.venv/
+venv/
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.so
+*.dylib
+*.dll
+
+# Logs
+*.log
+
+# Coverage reports
+.coverage
+htmlcov/
+.coverage.*
+.cache/
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Distribution / packaging
+.Python
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage.xml
+nosetests.xml
+```
