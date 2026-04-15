@@ -154,15 +154,19 @@ class Settings:
         self.LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
         # LangGraph Configuration
+        self.LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()  # openai, groq, google
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-        self.DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-5-mini")
+        self.GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+        self.GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+        self.DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
         self.DEFAULT_LLM_TEMPERATURE = float(os.getenv("DEFAULT_LLM_TEMPERATURE", "0.2"))
         self.MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
         self.MAX_LLM_CALL_RETRIES = int(os.getenv("MAX_LLM_CALL_RETRIES", "3"))
         self.LLM_TOTAL_TIMEOUT = int(os.getenv("LLM_TOTAL_TIMEOUT", "60"))
 
         # Long term memory Configuration
-        self.LONG_TERM_MEMORY_MODEL = os.getenv("LONG_TERM_MEMORY_MODEL", "gpt-5-nano")
+        self.LONG_TERM_MEMORY_PROVIDER = os.getenv("LONG_TERM_MEMORY_PROVIDER", self.LLM_PROVIDER)
+        self.LONG_TERM_MEMORY_MODEL = os.getenv("LONG_TERM_MEMORY_MODEL", "gpt-4o-mini")
         self.LONG_TERM_MEMORY_EMBEDDER_MODEL = os.getenv("LONG_TERM_MEMORY_EMBEDDER_MODEL", "text-embedding-3-small")
         self.LONG_TERM_MEMORY_COLLECTION_NAME = os.getenv("LONG_TERM_MEMORY_COLLECTION_NAME", "longterm_memory")
         # JWT Configuration
@@ -220,9 +224,18 @@ class Settings:
                 self.RATE_LIMIT_ENDPOINTS[endpoint] = value
 
         # Evaluation Configuration
-        self.EVALUATION_LLM = os.getenv("EVALUATION_LLM", "gpt-5")
-        self.EVALUATION_BASE_URL = os.getenv("EVALUATION_BASE_URL", "https://api.openai.com/v1")
-        self.EVALUATION_API_KEY = os.getenv("EVALUATION_API_KEY", self.OPENAI_API_KEY)
+        self.EVALUATION_LLM = os.getenv("EVALUATION_LLM", "gpt-4o")
+        self.EVALUATION_PROVIDER = os.getenv("EVALUATION_PROVIDER", self.LLM_PROVIDER)
+        self.EVALUATION_BASE_URL = os.getenv("EVALUATION_BASE_URL", "")
+        self.EVALUATION_API_KEY = os.getenv("EVALUATION_API_KEY", "")
+        if not self.EVALUATION_API_KEY:
+            # Auto-select API key based on provider
+            if self.EVALUATION_PROVIDER == "groq":
+                self.EVALUATION_API_KEY = self.GROQ_API_KEY
+            elif self.EVALUATION_PROVIDER == "google":
+                self.EVALUATION_API_KEY = self.GOOGLE_API_KEY
+            else:
+                self.EVALUATION_API_KEY = self.OPENAI_API_KEY
         self.EVALUATION_SLEEP_TIME = int(os.getenv("EVALUATION_SLEEP_TIME", "10"))
 
         # Apply environment-specific settings
