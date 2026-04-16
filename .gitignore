@@ -51,3 +51,10 @@ pip-delete-this-directory.txt
 .coverage.xml
 nosetests.xml
 ```
+=======
+# Misc
+*.ipynb
+
+# Reports
+evals/reports/
+>>>>>>> 8e6e7b3 (Start)

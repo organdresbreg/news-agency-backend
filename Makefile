@@ -1,6 +1,7 @@
+export PATH := $(HOME)/.local/bin:$(PATH)
 .DEFAULT_GOAL := help
 
-DOCKER_COMPOSE ?= docker-compose
+DOCKER_COMPOSE ?= docker compose
 ENV            ?= development
 VALID_ENVS     := development staging production test
 
@@ -36,7 +37,7 @@ install:
 # Server
 # ---------------------------------------------------------------------------
 dev:
-	@$(call run_with_env,uv run uvicorn app.main:app --reload --port 8000)
+	@$(call run_with_env,uv run uvicorn app.main:app --reload --reload-dir app --port 8000)
 
 staging:
 	@$(call run_with_env,$(MAKE) _serve ENV=staging)
