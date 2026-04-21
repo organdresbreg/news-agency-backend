@@ -32,7 +32,7 @@ with tab1:
         try:
             # Nota: Ajusta esto según cómo espere los datos tu endpoint de login.
             # Usualmente es JSON: {"username": "...", "password": "..."}
-            response = requests.post(LOGIN_URL, json={"username": username, "password": password})
+            response = requests.post(LOGIN_URL, data={"email": username, "password": password})
 
             if response.status_code == 200:
                 data = response.json()
