@@ -126,9 +126,9 @@ class LLMRegistry:
         """Initialize Google AI Studio models (free tier)."""
         cls.LLMS = [
             {
-                "name": "gemini-2.0-flash-exp",
+                "name": "gemini-3.1-flash-lite-preview",
                 "llm": ChatGoogleGenerativeAI(
-                    model="gemini-2.0-flash-exp",
+                    model="gemini-3.1-flash-lite-preview",
                     google_api_key=settings.GOOGLE_API_KEY,
                     max_output_tokens=settings.MAX_TOKENS,
                     temperature=settings.DEFAULT_LLM_TEMPERATURE,
@@ -222,7 +222,7 @@ class LLMService:
         """Initialize the LLM service."""
         # Initialize registry first based on configured provider
         LLMRegistry.initialize()
-        
+
         self._llm: Optional[BaseChatModel] = None
         self._current_model_index: int = 0
         self._bound_tools: List = []
@@ -252,7 +252,9 @@ class LLMService:
                 )
             else:
                 logger.error("no_llms_available", provider=settings.LLM_PROVIDER)
-                raise RuntimeError(f"No LLMs available for provider '{settings.LLM_PROVIDER}'. Please check your API keys.")
+                raise RuntimeError(
+                    f"No LLMs available for provider '{settings.LLM_PROVIDER}'. Please check your API keys."
+                )
 
     def _get_next_model_index(self) -> int:
         """Get the next model index in circular fashion.

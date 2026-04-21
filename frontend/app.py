@@ -36,11 +36,20 @@ with tab1:
 
             if response.status_code == 200:
                 data = response.json()
-                # Asumiendo que el token viene en 'access_token' o similar.
-                # Revisa en /docs qué devuelve exactamente /auth/login
-                st.session_state.token = data.get("access_token") or data.get("token")
-                st.success("¡Autenticado con éxito!")
-                st.rerun()
+                user_token = data.get("access_token") or data.get("token")
+
+                # Crear una sesión para interactuar con el chat
+                session_response = requests.post(
+                    f"{BASE_URL}/auth/session", headers={"Authorization": f"Bearer {user_token}"}
+                )
+
+                if session_response.status_code == 200:
+                    session_data = session_response.json()
+                    st.session_state.token = session_data["token"]["access_token"]
+                    st.success("¡Autenticado con éxito y sesión creada!")
+                    st.rerun()
+                else:
+                    st.error(f"Error al crear sesión: {session_response.status_code} - {session_response.text}")
             else:
                 st.error(f"Error: {response.status_code} - {response.text}")
         except Exception as e:
