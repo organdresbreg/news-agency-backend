@@ -1,99 +1,50 @@
-"""Frontend Module."""
+"""Entry point for Chainlit App. Routing lógico según el "Modo" seleccionado."""
 
-import json
+import os
 
-import requests
-import streamlit as st
+import chainlit as cl
+from agents.registry import get_agent
+from config import DEFAULT_MODE
+from dotenv import load_dotenv
+from handlers.auth import authenticate_user
+from handlers.session import init_session_state
 
-# Configuración de la página
-st.set_page_config(page_title="Web Assistant", page_icon="🤖")
-st.title("🤖 Web Assistant")
+# Cargar .env.development si existe, o .env por defecto
+load_dotenv(dotenv_path=".env.development", override=True)
 
-# URLs del backend
-BASE_URL = "http://localhost:8000/api/v1"
-LOGIN_URL = f"{BASE_URL}/auth/login"
-CHAT_URL = f"{BASE_URL}/chatbot/chat"
 
-# Inicializar estado de sesión
-if "token" not in st.session_state:
-    st.session_state.token = None
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+@cl.password_auth_callback
+async def auth_callback(username: str, password: str):
+    """Callback de autenticación de Chainlit."""
+    token = await authenticate_user(username, password)
+    if token:
+        # En Chainlit el callback de autenticación no tiene contexto websocket aún.
+        # Pasamos el token como metadata para recuperarlo después.
+        return cl.User(identifier=username, metadata={"token": token})
+    return None
 
-# --- Pestañas para Login y Chat ---
-tab1, tab2 = st.tabs(["🔐 Autenticación", "💬 Chat"])
 
-with tab1:
-    st.header("Iniciar Sesión / Registro")
-    username = st.text_input("Usuario")
-    password = st.text_input("Contraseña", type="password")
+@cl.on_chat_start
+async def on_chat_start():
+    """Se ejecuta al iniciar la sesión del usuario (después del login)."""
+    # Recuperamos el usuario y el token de la sesión actual
+    user = cl.user_session.get("user")
+    if user and user.metadata and "token" in user.metadata:
+        cl.user_session.set("token", user.metadata["token"])
 
-    if st.button("Entrar"):
-        try:
-            # Nota: Ajusta esto según cómo espere los datos tu endpoint de login.
-            # Usualmente es JSON: {"username": "...", "password": "..."}
-            response = requests.post(LOGIN_URL, data={"email": username, "password": password})
+    init_session_state()
+    cl.user_session.set("mode", DEFAULT_MODE)
 
-            if response.status_code == 200:
-                data = response.json()
-                user_token = data.get("access_token") or data.get("token")
+    # Inicializar el agente del modo por defecto
+    agent = get_agent(DEFAULT_MODE)
+    await agent.initialize()
 
-                # Crear una sesión para interactuar con el chat
-                session_response = requests.post(
-                    f"{BASE_URL}/auth/session", headers={"Authorization": f"Bearer {user_token}"}
-                )
 
-                if session_response.status_code == 200:
-                    session_data = session_response.json()
-                    st.session_state.token = session_data["token"]["access_token"]
-                    st.success("¡Autenticado con éxito y sesión creada!")
-                    st.rerun()
-                else:
-                    st.error(f"Error al crear sesión: {session_response.status_code} - {session_response.text}")
-            else:
-                st.error(f"Error: {response.status_code} - {response.text}")
-        except Exception as e:
-            st.error(f"Error de conexión: {str(e)}")
+@cl.on_message
+async def on_message(message: cl.Message):
+    """Se ejecuta al recibir un mensaje del usuario."""
+    current_mode = cl.user_session.get("mode", DEFAULT_MODE)
+    agent = get_agent(current_mode)
 
-with tab2:
-    if not st.session_state.token:
-        st.warning("⚠️ Por favor, autentícate en la pestaña 'Autenticación' primero.")
-    else:
-        # Mostrar historial
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-        # Input del usuario
-        if prompt := st.chat_input("Escribe tu mensaje aquí..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            with st.chat_message("assistant"):
-                message_placeholder = st.empty()
-                full_response = ""
-
-                try:
-                    # Preparar headers con el token
-                    headers = {"Authorization": f"Bearer {st.session_state.token}", "Content-Type": "application/json"}
-
-                    # Estructura del mensaje para LangGraph/FastAPI
-                    # Ajusta 'messages' según lo que espere ChatRequest en el backend
-                    payload = {"messages": [{"role": "user", "content": prompt}]}
-
-                    response = requests.post(CHAT_URL, json=payload, headers=headers)
-
-                    if response.status_code == 200:
-                        data = response.json()
-                        # Ajusta esto según la respuesta de ChatResponse
-                        # Usualmente devuelve una lista de mensajes o un objeto con 'messages'
-                        assistant_msg = data.get("messages", [])[-1].get("content", str(data))
-
-                        message_placeholder.markdown(assistant_msg)
-                        st.session_state.messages.append({"role": "assistant", "content": assistant_msg})
-                    else:
-                        st.error(f"Error del servidor: {response.status_code} - {response.text}")
-
-                except Exception as e:
-                    st.error(f"Error de conexión: {str(e)}")
+    # Delegar el procesamiento al agente específico
+    await agent.process_message(message)

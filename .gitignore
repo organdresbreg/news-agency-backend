@@ -67,3 +67,8 @@ docker-buildx
 
 # Lock files for other managers
 Pipfile.lock
+
+# Chainlit
+.chainlit/
+public/
+.chainlit_secret.json
