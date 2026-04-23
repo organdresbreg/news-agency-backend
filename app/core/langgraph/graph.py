@@ -362,8 +362,15 @@ class LangGraphAgent:
                 config,
                 stream_mode="messages",
             ):
-                if isinstance(token.content, str) and token.content:
-                    yield token.content
+                content = token.content
+                if isinstance(content, list):
+                    # Handle cases where content is a list of parts (common in Gemini)
+                    text_parts = [part.get("text", "") if isinstance(part, dict) else str(part) for part in content]
+                    content = "".join(text_parts)
+
+                if content:
+                    logger.debug("yielding_token", content_preview=str(content)[:50])
+                    yield str(content)
 
             # After streaming completes, check for interrupt or update memory
             state = await self._graph.aget_state(config)

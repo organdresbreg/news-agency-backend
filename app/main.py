@@ -94,18 +94,30 @@ app = FastAPI(
 # Set up Prometheus metrics
 setup_metrics(app)
 
-# Add logging context middleware (must be added before other middleware to capture context)
+# Add logging context middleware
 app.add_middleware(LoggingContextMiddleware)
 
 # Add custom metrics middleware
 app.add_middleware(MetricsMiddleware)
 
-# Add profiling middleware (DEBUG only — saves HTML to /tmp on slow requests)
+# Add profiling middleware (DEBUG only)
 if settings.DEBUG:
     app.add_middleware(ProfilingMiddleware)
 
-# Add correlation ID middleware — must be outermost so request_id is set before all others
+# Add correlation ID middleware — outermost
 app.add_middleware(CorrelationIdMiddleware)
+
+# Set up CORS middleware - OUTERMOST (added LAST)
+origins = settings.ALLOWED_ORIGINS
+allow_all = "*" in origins or (len(origins) == 1 and origins[0] == "*")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins if not allow_all else ["http://localhost:3000", "http://localhost:8000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Set up rate limiter exception handler
 app.state.limiter = limiter
@@ -115,43 +127,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Add validation exception handler
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle validation errors from request data.
-
-    Args:
-        request: The request that caused the validation error
-        exc: The validation error
-
-    Returns:
-        JSONResponse: A formatted error response
-    """
-    # Log the validation error
-    logger.error(
-        "validation_error",
-        client_host=request.client.host if request.client else "unknown",
-        path=request.url.path,
-        errors=str(exc.errors()),
-    )
-
-    # Format the errors to be more user-friendly
-    formatted_errors = []
-    for error in exc.errors():
-        loc = " -> ".join([str(loc_part) for loc_part in error["loc"] if loc_part != "body"])
-        formatted_errors.append({"field": loc, "message": error["msg"]})
-
+    """Handle validation errors from request data."""
+    logger.error("validation_error", errors=str(exc.errors()))
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": "Validation error", "errors": formatted_errors},
+        content={"detail": "Validation error", "errors": exc.errors()},
     )
 
-
-# Set up CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)

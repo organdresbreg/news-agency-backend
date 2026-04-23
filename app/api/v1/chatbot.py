@@ -114,11 +114,11 @@ async def chat_stream(
                         chat_request.messages, session.id, user_id=session.user_id, username=session.username
                     ):
                         response = StreamResponse(content=chunk, done=False)
-                        yield f"data: {json.dumps(response.model_dump())}\n\n"
+                        yield f"data: {json.dumps(response.model_dump(mode='json'))}\n\n"
 
                 # Send final message indicating completion
                 final_response = StreamResponse(content="", done=True)
-                yield f"data: {json.dumps(final_response.model_dump())}\n\n"
+                yield f"data: {json.dumps(final_response.model_dump(mode='json'))}\n\n"
 
             except Exception as e:
                 logger.exception(
@@ -127,7 +127,7 @@ async def chat_stream(
                     error=str(e),
                 )
                 error_response = StreamResponse(content=str(e), done=True)
-                yield f"data: {json.dumps(error_response.model_dump())}\n\n"
+                yield f"data: {json.dumps(error_response.model_dump(mode='json'))}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
