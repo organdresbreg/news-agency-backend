@@ -243,6 +243,17 @@ async def login(
         raise HTTPException(status_code=422, detail=str(ve))
 
 
+@router.post("/logout")
+async def logout(user: User = Depends(get_current_user)):
+    """Logout the current user.
+
+    Since we use JWT, this primarily serves to allow the backend to perform
+    any necessary cleanup or logging.
+    """
+    logger.info("user_logged_out", user_id=user.id)
+    return {"status": "success", "message": "Successfully logged out"}
+
+
 @router.post("/session", response_model=SessionResponse)
 async def create_session(user: User = Depends(get_current_user)):
     """Create a new chat session for the authenticated user.
