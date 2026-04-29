@@ -60,8 +60,15 @@ class DatabaseService:
                 max_overflow=max_overflow,
             )
         except SQLAlchemyError as e:
-            logger.error("database_initialization_error", error=str(e), environment=settings.ENVIRONMENT.value)
-            # In production, don't raise - allow app to start even with DB issues
+            logger.exception(
+                "database_initialization_failed",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                connection_url=connection_url.replace(settings.POSTGRES_PASSWORD, "***"),
+                pool_size=pool_size,
+                max_overflow=max_overflow,
+                environment=settings.ENVIRONMENT.value,
+            )
             if settings.ENVIRONMENT != Environment.PRODUCTION:
                 raise
 
@@ -243,7 +250,16 @@ class DatabaseService:
                 session.exec(select(1)).first()
                 return True
         except Exception as e:
-            logger.error("database_health_check_failed", error=str(e))
+            logger.exception(
+                "database_health_check_failed",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                host=settings.POSTGRES_HOST,
+                port=settings.POSTGRES_PORT,
+                database=settings.POSTGRES_DB,
+                pool_size=self.engine.pool.size() if hasattr(self.engine.pool, "size") else "N/A",
+                checked_out=self.engine.pool.checkedout() if hasattr(self.engine.pool, "checkedout") else "N/A",
+            )
             return False
 
 

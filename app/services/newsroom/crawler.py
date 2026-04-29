@@ -4,7 +4,9 @@ import asyncio
 from typing import List, Optional
 from sqlmodel import Session
 from app.models.newsroom import NewsItem
+from app.core.config import settings
 from app.core.logging import logger
+
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 
 
@@ -16,10 +18,10 @@ async def crawl_news_items(db: Session, batch_size: int = 5):
     )  # Process up to 20 per run
 
     if not items:
-        logger.info("No items pending full content extraction.")
+        logger.info("no_pending_extractions")
         return
 
-    logger.info(f"Starting extraction for {len(items)} items...")
+    logger.info("starting_full_text_extraction", count=len(items))
 
     # Configure crawler
     browser_config = BrowserConfig(headless=True, verbose=False)
@@ -34,7 +36,7 @@ async def crawl_news_items(db: Session, batch_size: int = 5):
             batch = items[i : i + batch_size]
             urls = [item.url for item in batch]
 
-            logger.info(f"Processing batch {i // batch_size + 1} ({len(urls)} URLs)...")
+            logger.info("processing_crawler_batch", batch_num=i // batch_size + 1, url_count=len(urls))
 
             try:
                 # arun_many is optimized for multiple URLs
@@ -47,23 +49,41 @@ async def crawl_news_items(db: Session, batch_size: int = 5):
                         # Validate length (fallback to snippet if too short)
                         if content and len(content) > 150:
                             item.full_content = content
-                            logger.info(f"  [OK] Extracted {len(content)} chars from {item.url}")
+                            logger.info(
+                                "content_extracted", url=item.url, content_length=len(content), item_id=item.id
+                            )
+
                         else:
                             # Use content_snippet as fallback if extraction fails to get meaningful text
                             item.full_content = item.content_snippet
                             logger.warning(f"Content too short or empty for {item.url}, using snippet.")
                     else:
-                        logger.error(f"Failed to crawl {item.url}: {result.error_message}")
-                        # Even if it fails, we set it to snippet or empty to avoid re-processing forever
+                        logger.error(
+                            "crawl_item_failed",
+                            url=item.url,
+                            error_message=result.error_message,
+                            status_code=result.status_code if hasattr(result, "status_code") else None,
+                        )
                         item.full_content = item.content_snippet or ""
 
                 db.commit()  # Commit after each batch
 
-            except Exception as e:
-                logger.error(f"Batch error: {e}")
+            except asyncio.TimeoutError:
+                logger.exception("crawl_batch_timeout", batch_urls=urls)
                 db.rollback()
+                if settings.DEBUG:
+                    raise
+            except Exception as e:
+                logger.exception(
+                    "crawl_batch_unexpected_error",
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                )
+                db.rollback()
+                if settings.DEBUG:
+                    raise
 
-    logger.info("Extraction process finished.")
+    logger.info("extraction_process_finished")
 
 
 def run_crawler_sync(db: Session, batch_size: int = 5):

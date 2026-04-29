@@ -19,7 +19,8 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from asgi_correlation_id import CorrelationIdMiddleware
+from asgi_correlation_id import CorrelationIdMiddleware, correlation_id
+
 
 from app.api.v1.api import api_router
 from app.api.v1.chatbot import agent
@@ -141,6 +142,30 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"detail": "Validation error", "errors": exc.errors()},
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch-all for unhandled exceptions during development."""
+    logger.exception(
+        "unhandled_exception",
+        method=request.method,
+        path=request.url.path,
+        query_params=dict(request.query_params),
+        headers=dict(request.headers),
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"Internal error: {type(exc).__name__}",
+            "error_type": type(exc).__name__,
+            "request_id": correlation_id.get(),
+            # Solo en desarrollo:
+            "debug_info": str(exc) if settings.DEBUG else None,
+        },
     )
 
 

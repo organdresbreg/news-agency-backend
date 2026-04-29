@@ -40,7 +40,7 @@ def process_feeds(db: Session) -> Tuple[int, List[int]]:
 
     # Filter: 24h freshness
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=1)
-    logger.info(f"Starting RSS scan. Freshness cutoff: {cutoff_date}")
+    logger.info("starting_rss_scan", freshness_cutoff=cutoff_date.isoformat())
 
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -52,12 +52,13 @@ def process_feeds(db: Session) -> Tuple[int, List[int]]:
             continue
 
         try:
-            logger.info(f"Fetching {source.name} ({url})...")
+            logger.info("fetching_rss_feed", source_name=source.name, url=url)
+
             response = requests.get(url, headers=HEADERS, timeout=20)
             response.raise_for_status()
 
             feed = feedparser.parse(response.content)
-            logger.info(f"Parsing {len(feed.entries)} entries from {source.name}")
+            logger.info("parsing_rss_entries", count=len(feed.entries), source_name=source.name)
 
             for entry in feed.entries:
                 try:
@@ -120,12 +121,12 @@ def process_feeds(db: Session) -> Tuple[int, List[int]]:
                     new_items_count += 1
 
                 except Exception as entry_e:
-                    logger.error(f"Error in entry: {entry_e}")
+                    logger.exception("rss_entry_processing_failed", error_message=str(entry_e))
                     continue
 
         except Exception as source_e:
-            logger.error(f"Failed to sync {source.name}: {source_e}")
+            logger.exception("rss_source_sync_failed", source_name=source.name, error_message=str(source_e))
 
     db.commit()
-    logger.info(f"Sync complete. Created {new_items_count} items.")
+    logger.info("rss_sync_complete", created_count=new_items_count)
     return new_items_count, new_item_ids

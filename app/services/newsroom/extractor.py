@@ -14,12 +14,13 @@ from app.core.logging import logger
 
 # Load SpaCy model globally
 try:
-    logger.info("Cargando modelo SpaCy 'es_core_news_lg'...")
+    logger.info("loading_spacy_model", model_name="es_core_news_lg")
     nlp = spacy.load("es_core_news_lg")
-    logger.info("Modelo cargado exitosamente")
+    logger.info("spacy_model_loaded")
 except Exception as e:
-    logger.error(f"Error al cargar el modelo SpaCy: {e}")
+    logger.exception("spacy_model_load_failed", error_message=str(e))
     nlp = None
+
 
 # Mapping SpaCy labels to DB Enums
 # We only care about PER, ORG, LOC, GPE
@@ -116,10 +117,10 @@ def load_watchlist_matcher(db: Session, nlp_obj: spacy.language.Language) -> Opt
 
         matcher.add("WATCH_LIST", patterns)
 
-        logger.info(f"Watch List cargada: {len(patterns)} patrones (entidades + alias)")
+        logger.info("watch_list_loaded", pattern_count=len(patterns))
         return matcher, alias_map, types_map
     except Exception as e:
-        logger.error(f"Error al cargar Watch List: {e}")
+        logger.exception("watch_list_load_failed", error_message=str(e))
         return None, {}, {}
 
 
@@ -216,10 +217,10 @@ def _extract_from_item(
                 entities_added += 1
 
         item.entities_extracted = True
-        logger.info(f"  > Item {item.id}: {entities_added} entidades vinculadas ({item.language})")
+        logger.info("item_entities_linked", item_id=item.id, count=entities_added, lang=item.language)
         return True
     except Exception as e:
-        logger.error(f"Error in item {item.id}: {e}")
+        logger.exception("item_entity_extraction_failed", item_id=item.id, error_message=str(e))
         item.entities_extracted = True  # Mark to avoid retrying indefinitely
         return False
 
@@ -266,7 +267,8 @@ def process_native_pending(db: Session) -> int:
     if not items:
         return 0
 
-    logger.info(f"Procesando {len(items)} noticias NATIVAS ES con SpaCy (+ WatchList & BlackList)...")
+    logger.info("processing_native_news", count=len(items))
+
     count = 0
     for item in items:
         if _extract_from_item(db, item, matcher, watchlist_types, alias_map, blacklist):

@@ -25,8 +25,7 @@ def translate_batch(client: Groq, model: str, items_to_translate: List[NewsItem]
         return {"results": {}, "usage": None, "duration": 0}
 
     # Logging which items are being sent
-    item_titles = [f"[{item.id}] {item.title[:40]}..." for item in items_to_translate]
-    logger.info(f"Enviando lote para traducir: {', '.join(item_titles)}")
+    logger.info("sending_batch_to_translate", item_ids=[item.id for item in items_to_translate])
 
     # Construct the batch request payload
     batch_payload = {}
@@ -71,23 +70,30 @@ Items to translate:
         output_tokens = usage.completion_tokens
         total_tokens = usage.total_tokens
 
-        logger.info("[MÉTRICAS DEL LOTE]")
-        logger.info(f"  > Tokens de Entrada: {input_tokens}")
-        logger.info(f"  > Tokens de Salida: {output_tokens}")
-        logger.info(f"  > Total de Tokens: {total_tokens}")
-        logger.info(f"  > Tiempo de Respuesta: {batch_duration:.2f}s")
+        logger.info(
+            "batch_metrics",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            duration_s=round(batch_duration, 2),
+        )
 
         # Parse JSON content
         result = json.loads(response.choices[0].message.content)
 
-        # Log success for each item in the result
         for item_id, data in result.items():
-            logger.info(f"[ÉXITO] Noticia {item_id} traducida: {data.get('title_es', '')[:50]}...")
+            logger.info("item_translated", item_id=item_id, title_es=data.get("title_es", "")[:50])
 
         return {"results": result, "usage": usage, "duration": batch_duration}
 
     except Exception as e:
-        logger.error(f"[ERROR CRÍTICO] Traducción por lote fallida: {e}")
+        logger.exception(
+            "batch_translation_failed",
+            error_type=type(e).__name__,
+            error_message=str(e),
+            duration_s=round(time.time() - batch_start, 2),
+        )
+
         return {"results": {}, "usage": None, "duration": time.time() - batch_start}
 
 
@@ -97,9 +103,7 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
     Provides detailed execution metrics.
     """
     total_process_start = time.time()
-    logger.info("====================================================")
-    logger.info("INICIANDO SERVICIO DE TRADUCCIÓN (BATCH MODE)")
-    logger.info("====================================================")
+    logger.info("starting_translation_service", mode="batch")
 
     # 1. Fetch all items where title_es IS NULL
     query = db.query(NewsItem).filter(NewsItem.title_es.is_(None))
@@ -110,10 +114,10 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
     pending_items = query.all()
 
     if not pending_items:
-        logger.info("No hay noticias pendientes de traducción.")
+        logger.info("no_pending_translations")
         return 0
 
-    logger.info(f"Total de noticias a procesar: {len(pending_items)}")
+    logger.info("pending_translations_found", count=len(pending_items))
 
     # 2. Local Phase: Detect language and handle Spanish items
     batch_queue = []
@@ -136,10 +140,15 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
             else:
                 batch_queue.append(item)
         except Exception as e:
-            logger.error(f"[ERROR LOCAL] Item {item.id}: {e}")
+            logger.exception(
+                "local_processing_failed",
+                item_id=item.id,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
 
     if local_copies > 0:
-        logger.info(f"[LOCAL] {local_copies} noticias ya estaban en español (procesadas localmente)")
+        logger.info("local_translations_completed", count=local_copies)
 
     db.commit()  # Save detections
 
@@ -152,7 +161,7 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
     model = os.getenv("MODEL", "llama-3.1-8b-instant")
 
     if not api_key:
-        logger.error("[ERROR] No se encontró GROQ_API_KEY. Abortando.")
+        logger.error("api_key_missing", key_name="GROQ_API_KEY")
         return 0
 
     client = Groq(api_key=api_key)
@@ -165,12 +174,14 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
     acc_output_tokens = 0
     acc_total_tokens = 0
 
-    logger.info(f"[API] Iniciando traducción de {len(batch_queue)} noticias en {total_batches} lotes")
+    logger.info("starting_batch_translation", total_items=len(batch_queue), total_batches=total_batches)
 
     for i in range(0, len(batch_queue), batch_size):
         current_batch = batch_queue[i : i + batch_size]
         batch_num = i // batch_size + 1
-        logger.info(f"--- LOTE {batch_num} de {total_batches} ({len(current_batch)} noticias) ---")
+        logger.info(
+            "processing_batch", batch_num=batch_num, total_batches=total_batches, batch_size=len(current_batch)
+        )
 
         batch_data = translate_batch(client, model, current_batch)
         batch_results = batch_data["results"]
@@ -189,8 +200,7 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
                 item.content_es = batch_results[item_id_str].get("content_es")
                 translated_count += 1
             else:
-                # Fallback: copy original with error prefix
-                logger.warning(f"[FALLO] Noticia {item.id} sin traducción en la respuesta. Usando fallback.")
+                logger.warning("item_translation_missing", item_id=item.id)
                 item.title_es = f"[Fallo] {item.title}"
                 item.content_es = item.content_snippet
 
@@ -202,18 +212,22 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
         try:
             extractor.process_pending_entities(db, item_ids=batch_ids)
         except Exception as e:
-            logger.error(f"[AUTO-EXTRACTOR] Error in automated extraction: {e}")
+            logger.exception(
+                "auto_extraction_failed",
+                batch_ids=batch_ids,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
 
         # 4. Partial Summary after each batch
-        current_duration = time.time() - total_process_start
-        logger.info("----------------------------------------------------")
-        logger.info("RESUMEN PARCIAL DEL PROCESO")
-        logger.info(f"  > Noticias Traducidas (API): {translated_count}")
-        logger.info(f"  > Tokens de Entrada Acumulados: {acc_input_tokens}")
-        logger.info(f"  > Tokens de Salida Acumulados: {acc_output_tokens}")
-        logger.info(f"  > Total de Tokens Consumidos: {acc_total_tokens}")
-        logger.info(f"  > Tiempo Total de Ejecución: {current_duration:.2f}s")
-        logger.info("----------------------------------------------------")
+        logger.info(
+            "translation_process_partial_summary",
+            translated_count=translated_count,
+            input_tokens=acc_input_tokens,
+            output_tokens=acc_output_tokens,
+            total_tokens=acc_total_tokens,
+            total_duration_s=round(time.time() - total_process_start, 2),
+        )
 
         # 5. Rate Limiting Pause
         if i + batch_size < len(batch_queue):
@@ -222,14 +236,14 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
 
     total_duration = time.time() - total_process_start
 
-    logger.info("====================================================")
-    logger.info("RESUMEN FINAL DEL PROCESO")
-    logger.info(f"  > Noticias Traducidas (API): {translated_count}")
-    logger.info(f"  > Noticias Omitidas (ES): {local_copies}")
-    logger.info(f"  > Tokens de Entrada Acumulados: {acc_input_tokens}")
-    logger.info(f"  > Tokens de Salida Acumulados: {acc_output_tokens}")
-    logger.info(f"  > Total de Tokens Consumidos: {acc_total_tokens}")
-    logger.info(f"  > Tiempo Total de Ejecución: {total_duration:.2f}s")
-    logger.info("====================================================")
+    logger.info(
+        "translation_process_final_summary",
+        translated_count=translated_count,
+        local_copies=local_copies,
+        input_tokens=acc_input_tokens,
+        output_tokens=acc_output_tokens,
+        total_tokens=acc_total_tokens,
+        total_duration_s=round(total_duration, 2),
+    )
 
     return translated_count

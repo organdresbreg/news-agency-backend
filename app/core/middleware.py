@@ -184,14 +184,15 @@ class ProfilingMiddleware(BaseHTTPMiddleware):
                 "call_tree": call_tree,
             }
             filepath.write_text(json.dumps(report, indent=2))
+            top_frame = call_tree.get("children", [{}])[0] if call_tree.get("children") else {}
             logger.debug(
-                "slow_request_profile_saved",
-                path=request.url.path,
-                method=request.method,
+                "slow_request_detected",
+                endpoint=f"{request.method} {request.url.path}",
                 wall_time_ms=wall_ms,
                 cpu_time_ms=cpu_ms,
                 memory_peak_kb=mem_peak_kb,
-                io_wait_ms=round(wall_ms - cpu_ms, 2),
+                slowest_function=top_frame.get("function", "unknown"),
+                slowest_file=top_frame.get("file", "unknown"),
                 profile_file=str(filepath),
             )
 

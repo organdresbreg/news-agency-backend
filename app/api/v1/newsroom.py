@@ -30,11 +30,16 @@ def auto_translate_background(new_item_ids: List[int]):
     """Helper to translate items. Extraction is handled internally by translator per batch."""
     with database_service.get_session_maker() as db:
         try:
-            logger.info(f"[Background] Starting translation flow for {len(new_item_ids)} items")
+            logger.info("auto_translate_background_started", count=len(new_item_ids))
             count = translator.process_pending_translations(db, new_item_ids)
-            logger.info(f"[Background] Flow A: Translated {count} items")
+            logger.info("auto_translate_background_completed", count=count)
         except Exception as e:
-            logger.error(f"[Background] Error during translation flow: {e}")
+            logger.exception(
+                "auto_translate_background_failed",
+                new_item_ids=new_item_ids,
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
 
 
 def auto_extract_entities_background():
@@ -43,9 +48,13 @@ def auto_extract_entities_background():
         try:
             count = extractor.process_pending_entities(db)
             if count > 0:
-                logger.info(f"[Background] Extracted entities from {count} translated items")
+                logger.info("auto_extract_entities_completed", count=count)
         except Exception as e:
-            logger.error(f"[Background] Error during batch entity extraction: {e}")
+            logger.exception(
+                "auto_extract_entities_failed",
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
 
 
 def auto_extract_native_background():
@@ -54,9 +63,13 @@ def auto_extract_native_background():
         try:
             count = extractor.process_native_pending(db)
             if count > 0:
-                logger.info(f"[Background] Extracted entities from {count} native ES items")
+                logger.info("auto_extract_native_completed", count=count)
         except Exception as e:
-            logger.error(f"[Background] Error during native entity extraction: {e}")
+            logger.exception(
+                "auto_extract_native_failed",
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
 
 
 # --- Status and Stats ---
