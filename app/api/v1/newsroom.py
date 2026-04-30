@@ -6,7 +6,9 @@ from typing import List
 from sqlmodel import Session
 from sqlalchemy.orm import joinedload
 from sqlalchemy import text
-from datetime import datetime
+from datetime import datetime, timezone
+import requests
+import feedparser
 
 from app.services.database import database_service
 from app.models.newsroom import Source, NewsItem, Entity, EntityType, AgentConfig
@@ -87,51 +89,6 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
     sources_count = db.query(Source).count()
     active_news_count = db.query(NewsItem).filter(NewsItem.status == "DISCOVERED").count()
     return {"active_news": active_news_count, "sources_count": sources_count}
-
-
-# --- Sources ---
-
-
-@router.get("/sources", response_model=List[schemas.SourceResponse])
-def read_sources(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    """Retrieves a list of news sources."""
-    return db.query(Source).offset(skip).limit(limit).all()
-
-
-@router.post("/sources", response_model=schemas.SourceResponse)
-def create_source(source: schemas.SourceCreate, db: Session = Depends(get_db)):
-    """Creates a new news source."""
-    db_source = Source(**source.model_dump())
-    db.add(db_source)
-    db.commit()
-    db.refresh(db_source)
-    return db_source
-
-
-@router.put("/sources/{source_id}", response_model=schemas.SourceResponse)
-def update_source(source_id: int, source: schemas.SourceCreate, db: Session = Depends(get_db)):
-    """Updates an existing news source."""
-    db_source = db.query(Source).filter(Source.id == source_id).first()
-    if db_source is None:
-        raise HTTPException(status_code=404, detail="Source not found")
-
-    for key, value in source.model_dump().items():
-        setattr(db_source, key, value)
-
-    db.commit()
-    db.refresh(db_source)
-    return db_source
-
-
-@router.delete("/sources/{source_id}")
-def delete_source(source_id: int, db: Session = Depends(get_db)):
-    """Deletes a news source."""
-    db_source = db.query(Source).filter(Source.id == source_id).first()
-    if db_source is None:
-        raise HTTPException(status_code=404, detail="Source not found")
-    db.delete(db_source)
-    db.commit()
-    return {"ok": True}
 
 
 # --- News Operations ---
@@ -395,7 +352,7 @@ def export_system(db: Session = Depends(get_db)):
                 "name": s.name,
                 "type": s.type,
                 "subtype": s.subtype,
-                "config": s.config,
+                "url": s.url,
                 "icon": s.icon,
                 "health_status": s.health_status,
                 "active": s.active,
@@ -453,7 +410,7 @@ async def import_system(data: dict, db: Session = Depends(get_db)):
                 name=s_data["name"],
                 type=s_data["type"],
                 subtype=s_data.get("subtype"),
-                config=s_data["config"],
+                url=s_data["url"],
                 icon=s_data.get("icon"),
                 health_status=s_data.get("health_status", "OK"),
                 active=s_data.get("active", True),

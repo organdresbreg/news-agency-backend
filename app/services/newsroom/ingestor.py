@@ -47,18 +47,60 @@ def process_feeds(db: Session) -> Tuple[int, List[int]]:
     }
 
     for source in sources:
-        url = source.config.get("url")
+        url = source.url
         if not url:
             continue
+
+        # Circuit Breaker: Skip if DEGRADED and backoff not met
+        if source.health_status == "DEGRADED":  # Comparing string for simplicity as it's an Enum string
+            if source.last_fetch_attempt:
+                cooldown = timedelta(hours=2)
+                # Ensure timezone-naive comparison if using utcnow
+                if datetime.utcnow() - source.last_fetch_attempt < cooldown:
+                    logger.info("skipping_degraded_source", source_name=source.name)
+                    continue
+
+        # Skip completely offline or banned sources
+        if source.health_status in ["OFFLINE", "BANNED"]:
+            continue
+
+        source.last_fetch_attempt = datetime.utcnow()
 
         try:
             logger.info("fetching_rss_feed", source_name=source.name, url=url)
 
-            response = requests.get(url, headers=HEADERS, timeout=20)
+            # ETag & Last-Modified Support
+            headers = HEADERS.copy()
+            if source.etag:
+                headers["If-None-Match"] = source.etag
+            if source.last_modified_header:
+                headers["If-Modified-Since"] = source.last_modified_header
+
+            response = requests.get(url, headers=headers, timeout=20)
+
+            if response.status_code == 304:
+                logger.info("rss_not_modified", source_name=source.name)
+                # Success, no new data
+                source.last_successful_fetch = datetime.utcnow()
+                source.consecutive_errors = 0
+                if source.health_status == "DEGRADED":
+                    source.health_status = "HEALTHY"
+                continue
+
             response.raise_for_status()
+
+            # Save new cache headers
+            source.etag = response.headers.get("etag")
+            source.last_modified_header = response.headers.get("last-modified")
 
             feed = feedparser.parse(response.content)
             logger.info("parsing_rss_entries", count=len(feed.entries), source_name=source.name)
+
+            # Success markers
+            source.last_successful_fetch = datetime.utcnow()
+            source.consecutive_errors = 0
+            if source.health_status == "DEGRADED":
+                source.health_status = "HEALTHY"
 
             for entry in feed.entries:
                 try:
@@ -114,6 +156,8 @@ def process_feeds(db: Session) -> Tuple[int, List[int]]:
                         status="DISCOVERED",
                         language=detected_lang,
                         content_snippet=content_snippet,
+                        trust_score=source.trust_score,
+                        tier=source.tier,
                     )
                     db.add(new_item)
                     db.flush()
@@ -126,6 +170,12 @@ def process_feeds(db: Session) -> Tuple[int, List[int]]:
 
         except Exception as source_e:
             logger.exception("rss_source_sync_failed", source_name=source.name, error_message=str(source_e))
+            source.consecutive_errors += 1
+            if source.consecutive_errors >= 3:
+                source.health_status = "DEGRADED"
+                logger.warning(
+                    "source_degraded_circuit_open", source_name=source.name, errors=source.consecutive_errors
+                )
 
     db.commit()
     logger.info("rss_sync_complete", created_count=new_items_count)

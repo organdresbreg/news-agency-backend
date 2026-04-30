@@ -103,6 +103,7 @@ docker-build:
 docker-up:
 	$(call load_env_file)
 	@APP_ENV=$(ENV) $(DOCKER_COMPOSE) --env-file .env.$(ENV) up -d --build db app
+	@$(MAKE) docker-logs ENV=$(ENV)
 
 docker-down:
 	$(call load_env_file)

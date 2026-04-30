@@ -1,45 +1,19 @@
 """Pydantic schemas for the newsroom API."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
-class SourceBase(BaseModel):
-    """Base schema for a news source."""
-
-    name: str
-    type: str
-    subtype: Optional[str] = None
-    config: Dict[str, Any]
-    icon: Optional[str] = None
-    health_status: str = "OK"
-    active: bool = True
-
-
-class SourceCreate(SourceBase):
-    """Schema for creating a news source."""
-
-    pass
-
-
-class SourceResponse(SourceBase):
-    """Response schema for a news source."""
-
-    id: int
-
-    class Config:
-        """Pydantic config for SourceResponse."""
-
-        from_attributes = True
+from .sources import SourceResponse
 
 
 class EntityBase(BaseModel):
     """Base schema for an entity."""
 
     name: str
-    type: str
+    type: Optional[str] = None
 
 
 class EntityCreate(EntityBase):
@@ -84,6 +58,8 @@ class NewsItemBase(BaseModel):
     url: str
     published_date: Optional[str] = None
     status: str = "DISCOVERED"
+    trust_score: float = 50.0
+    tier: int = 3
 
 
 class NewsItemCreate(NewsItemBase):

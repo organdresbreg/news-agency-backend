@@ -22,22 +22,24 @@ RUN apt-get update && apt-get install -y \
     && pip install uv \
     && rm -rf /var/lib/apt/lists/*
 
+# Create a non-root user earlier
+RUN useradd -m appuser
+
 # Copy pyproject.toml first to leverage Docker cache
-COPY pyproject.toml .
+COPY --chown=appuser:appuser pyproject.toml .
 RUN uv venv && . .venv/bin/activate && uv pip install -e .
 
-# Copy the application
-COPY . .
+# Copy the application with correct ownership from the start
+COPY --chown=appuser:appuser . .
 
-# Make entrypoint script executable - do this before changing user
+# Make entrypoint script executable
 RUN chmod +x /app/scripts/docker-entrypoint.sh
 
-# Create a non-root user
-RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
+# Create logs directory and set ownership
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app/logs
 
-# Create log directory
-RUN mkdir -p /app/logs
+# Set user
+USER appuser
 
 # Default port
 EXPOSE 8000

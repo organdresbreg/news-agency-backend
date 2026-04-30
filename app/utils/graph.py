@@ -8,34 +8,27 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.schemas import Message
 
-# Cache tiktoken encoding at module level — thread-safe and reusable
-try:
-    _TIKTOKEN_ENCODING = tiktoken.encoding_for_model(settings.DEFAULT_LLM_MODEL)
-except KeyError:
-    _TIKTOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
+# Tiktoken disabled to avoid network timeouts
+_TIKTOKEN_ENCODING = None
 
 
 def _count_tokens_tiktoken(messages: list) -> int:
-    """Count tokens locally using tiktoken — no API call needed."""
+    """Approximate token count using word split — no tiktoken, no internet."""
     num_tokens = 0
     for message in messages:
-        # Every message has overhead tokens for role/name
         num_tokens += 4
+        content = ""
         if isinstance(message, dict):
-            for _, value in message.items():
-                if isinstance(value, str):
-                    num_tokens += len(_TIKTOKEN_ENCODING.encode(value))
+            content = " ".join([str(v) for v in message.values() if isinstance(v, str)])
         elif isinstance(message, BaseMessage):
-            content = message.content
-            if isinstance(content, str):
-                num_tokens += len(_TIKTOKEN_ENCODING.encode(content))
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, str):
-                        num_tokens += len(_TIKTOKEN_ENCODING.encode(block))
-                    elif isinstance(block, dict) and "text" in block:
-                        num_tokens += len(_TIKTOKEN_ENCODING.encode(block["text"]))
-    num_tokens += 2  # every reply is primed with assistant
+            if isinstance(message.content, str):
+                content = message.content
+            elif isinstance(message.content, list):
+                content = " ".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in message.content])
+
+        # Simple approximation: 1.3 tokens per word
+        num_tokens += int(len(content.split()) * 1.3)
+    num_tokens += 2
     return num_tokens
 
 

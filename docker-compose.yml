@@ -16,8 +16,7 @@ services:
       timeout: 5s
       retries: 5
     restart: always
-    networks:
-      - monitoring
+
 
   # Valkey (Redis-compatible) cache — optional, set VALKEY_HOST=valkey in your .env to enable
   valkey:
@@ -32,13 +31,12 @@ services:
       timeout: 5s
       retries: 5
     restart: always
-    networks:
-      - monitoring
 
   # Single API service with dynamic environment
   app:
     build:
       context: .
+      network: host
       args:
         APP_ENV: ${APP_ENV:-development}
     ports:
@@ -52,6 +50,7 @@ services:
       - APP_ENV=${APP_ENV:-development}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-supersecretkeythatshouldbechangedforproduction}
       - POSTGRES_HOST=db
+    command: "/app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
       db:
         condition: service_healthy
@@ -62,8 +61,6 @@ services:
       retries: 3
       start_period: 10s
     restart: on-failure
-    networks:
-      - monitoring
 
   # Prometheus
   prometheus:
@@ -74,8 +71,6 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
-    networks:
-      - monitoring
     restart: always
 
   # Grafana
@@ -90,8 +85,6 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
-    networks:
-      - monitoring
     restart: always
 
   cadvisor:
@@ -103,16 +96,16 @@ services:
       - /var/run:/var/run:rw
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-    networks:
-      - monitoring
     restart: always
 
-
-networks:
-  monitoring:
-    driver: bridge
 
 volumes:
   grafana-storage:
   postgres-data:
   valkey-data:
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1280"
