@@ -15,6 +15,7 @@ from app.models.session import Session  # noqa: F401
 from app.models.thread import Thread  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.newsroom import Source, Entity, NewsItem, AgentConfig, EntityType, EntitySourceLink, NewsEntityLink
+from app.models.categories import Category  # noqa: F401
 
 # Alembic Config object
 config = context.config
