@@ -47,6 +47,7 @@ dependencies = [
     "langdetect>=1.0.9",
     "beautifulsoup4>=4.14.3",
     "spacy>=3.8.14",
+    "python-dateutil>=2.9.0.post0",
 ]
 
 [project.optional-dependencies]

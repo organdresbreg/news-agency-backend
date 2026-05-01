@@ -142,19 +142,21 @@ def get_rejected_news(db: Session = Depends(get_db)):
 
 @router.delete("/news/{news_id}")
 def delete_news_item(news_id: int, db: Session = Depends(get_db)):
-    """Deletes a news item."""
+    """Soft-deletes a news item by moving it to the archive."""
     item = db.query(NewsItem).filter(NewsItem.id == news_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="News item not found")
-    db.delete(item)
+    item.status = "ARCHIVED"
     db.commit()
     return {"ok": True}
 
 
 @router.delete("/news/rejected/all")
 def empty_trash(db: Session = Depends(get_db)):
-    """Deletes all news items with 'REJECTED' status."""
-    db.query(NewsItem).filter(NewsItem.status == "REJECTED").delete(synchronize_session=False)
+    """Soft-deletes all rejected news items by moving them to the archive."""
+    db.query(NewsItem).filter(NewsItem.status == "REJECTED").update(
+        {NewsItem.status: "ARCHIVED"}, synchronize_session=False
+    )
     db.commit()
     return {"ok": True}
 
@@ -173,8 +175,10 @@ def restore_news_item(news_id: int, db: Session = Depends(get_db)):
 
 @router.post("/news/batch/delete")
 def batch_delete_news(request: schemas.BatchIdRequest, db: Session = Depends(get_db)):
-    """Deletes multiple news items in a single request."""
-    db.query(NewsItem).filter(NewsItem.id.in_(request.ids)).delete(synchronize_session=False)
+    """Soft-deletes multiple news items by moving them to the archive."""
+    db.query(NewsItem).filter(NewsItem.id.in_(request.ids)).update(
+        {NewsItem.status: "ARCHIVED"}, synchronize_session=False
+    )
     db.commit()
     return {"ok": True, "count": len(request.ids)}
 
@@ -184,6 +188,50 @@ def batch_restore_news(request: schemas.BatchIdRequest, db: Session = Depends(ge
     """Restores multiple news items in a single request."""
     db.query(NewsItem).filter(NewsItem.id.in_(request.ids)).update(
         {NewsItem.status: "DISCOVERED"}, synchronize_session=False
+    )
+    db.commit()
+    return {"ok": True, "count": len(request.ids)}
+
+
+# --- Archive Operations (Physical Deletion) ---
+
+
+@router.get("/news/archived", response_model=List[schemas.NewsItemResponse])
+def get_archived_news(db: Session = Depends(get_db)):
+    """Retrieves all news items with 'ARCHIVED' status."""
+    return (
+        db.query(NewsItem)
+        .options(joinedload(NewsItem.source), joinedload(NewsItem.entities))
+        .filter(NewsItem.status == "ARCHIVED")
+        .order_by(NewsItem.published_date.desc())
+        .all()
+    )
+
+
+@router.delete("/news/archived/all")
+def empty_archive(db: Session = Depends(get_db)):
+    """Physically deletes all archived news items."""
+    db.query(NewsItem).filter(NewsItem.status == "ARCHIVED").delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/news/archived/{news_id}")
+def purge_archived_news(news_id: int, db: Session = Depends(get_db)):
+    """Physically deletes a specific archived news item."""
+    item = db.query(NewsItem).filter(NewsItem.id == news_id, NewsItem.status == "ARCHIVED").first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Archived news item not found")
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/news/archived/batch/delete")
+def batch_purge_archived_news(request: schemas.BatchIdRequest, db: Session = Depends(get_db)):
+    """Physically deletes multiple archived news items."""
+    db.query(NewsItem).filter(NewsItem.id.in_(request.ids), NewsItem.status == "ARCHIVED").delete(
+        synchronize_session=False
     )
     db.commit()
     return {"ok": True, "count": len(request.ids)}

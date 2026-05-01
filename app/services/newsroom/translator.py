@@ -94,7 +94,7 @@ Items to translate:
             duration_s=round(time.time() - batch_start, 2),
         )
 
-        return {"results": {}, "usage": None, "duration": time.time() - batch_start}
+        return {"results": {}, "usage": None, "duration": time.time() - batch_start, "error": str(e)}
 
 
 def process_pending_translations(db: Session, item_ids: List[int] = None) -> int:
@@ -157,11 +157,18 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
         return len(pending_items)
 
     # 3. API Phase: Batch translation
-    api_key = os.getenv("GROQ_API_KEY") or os.getenv("API_KEY")
+    from app.core.config import settings
+
+    api_key = settings.GROQ_API_KEY or os.getenv("API_KEY")
     model = os.getenv("MODEL", "llama-3.1-8b-instant")
 
     if not api_key:
         logger.error("api_key_missing", key_name="GROQ_API_KEY")
+        # Marcar los items como fallidos para que la UI lo refleje
+        for item in batch_queue:
+            item.title_es = f"[Traducción no disponible por falta de API Key] {item.title}"
+            item.content_es = item.content_snippet
+        db.commit()
         return 0
 
     client = Groq(api_key=api_key)
@@ -184,8 +191,9 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
         )
 
         batch_data = translate_batch(client, model, current_batch)
-        batch_results = batch_data["results"]
-        usage = batch_data["usage"]
+        batch_results = batch_data.get("results", {})
+        usage = batch_data.get("usage")
+        batch_error = batch_data.get("error")
 
         if usage:
             acc_input_tokens += usage.prompt_tokens
@@ -201,7 +209,12 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
                 translated_count += 1
             else:
                 logger.warning("item_translation_missing", item_id=item.id)
-                item.title_es = f"[Fallo] {item.title}"
+                if batch_error and "AuthenticationError" in batch_error:
+                    error_prefix = "[Traducción no disponible por error de autenticación]"
+                else:
+                    error_prefix = f"[Fallo API: {batch_error[:40]}...]" if batch_error else "[Fallo Traducción]"
+
+                item.title_es = f"{error_prefix} {item.title}"
                 item.content_es = item.content_snippet
 
         db.commit()

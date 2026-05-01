@@ -10,10 +10,11 @@ import requests
 from sqlmodel import Session
 from app.models.newsroom import Source, NewsItem
 from datetime import datetime, timedelta, timezone
+from dateutil import parser as dateutil_parser
 from langdetect import detect
 from bs4 import BeautifulSoup
 import re
-from typing import Tuple, List
+from typing import Optional, Tuple, List
 from app.core.logging import logger
 
 
@@ -25,6 +26,38 @@ def clean_html(html_content: str) -> str:
     text = soup.get_text(separator=" ")
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def parse_entry_date(entry) -> datetime:
+    """Parse a feed entry's publication date and normalize to UTC.
+
+    Uses python-dateutil for robust multi-format parsing. If no timezone
+    info is present in the source, UTC is assumed as the default.
+    Falls back to the current UTC time if all parsing attempts fail.
+    """
+    # 1. Try parsing the human-readable string (most reliable, includes tz info)
+    published_str = entry.get("published") or entry.get("updated")
+    if published_str:
+        try:
+            dt = dateutil_parser.parse(published_str)
+            # If no timezone info, assume UTC
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except (ValueError, OverflowError):
+            pass
+
+    # 2. Fallback: use feedparser's pre-parsed tuple (time.struct_time in UTC)
+    if hasattr(entry, "published_parsed") and entry.published_parsed:
+        try:
+            # feedparser always returns published_parsed in UTC
+            dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+            return dt
+        except (TypeError, ValueError):
+            pass
+
+    # 3. Last resort: use current UTC time
+    return datetime.now(timezone.utc)
 
 
 def process_feeds(db: Session) -> Tuple[int, List[int]]:
@@ -69,32 +102,14 @@ def process_feeds(db: Session) -> Tuple[int, List[int]]:
         try:
             logger.info("fetching_rss_feed", source_name=source.name, url=url)
 
-            # ETag & Last-Modified Support
             headers = HEADERS.copy()
-            if source.etag:
-                headers["If-None-Match"] = source.etag
-            if source.last_modified_header:
-                headers["If-Modified-Since"] = source.last_modified_header
-
             response = requests.get(url, headers=headers, timeout=20)
-
-            if response.status_code == 304:
-                logger.info("rss_not_modified", source_name=source.name)
-                # Success, no new data
-                source.last_successful_fetch = datetime.utcnow()
-                source.consecutive_errors = 0
-                if source.health_status == "DEGRADED":
-                    source.health_status = "HEALTHY"
-                continue
-
             response.raise_for_status()
-
-            # Save new cache headers
-            source.etag = response.headers.get("etag")
-            source.last_modified_header = response.headers.get("last-modified")
 
             feed = feedparser.parse(response.content)
             logger.info("parsing_rss_entries", count=len(feed.entries), source_name=source.name)
+
+            is_initial_sync = source.last_successful_fetch is None
 
             # Success markers
             source.last_successful_fetch = datetime.utcnow()
@@ -113,15 +128,11 @@ def process_feeds(db: Session) -> Tuple[int, List[int]]:
                     if existing:
                         continue
 
-                    # 2. Freshness Check (24h)
-                    item_date = datetime.now(timezone.utc)
-                    if hasattr(entry, "published_parsed") and entry.published_parsed:
-                        try:
-                            item_date = datetime(*entry.published_parsed[:6]).replace(tzinfo=timezone.utc)
-                        except Exception:
-                            pass
+                    # 2. Freshness Check (24h) — date normalized to UTC
+                    item_date = parse_entry_date(entry)
 
-                    if item_date < cutoff_date:
+                    # Solo descartamos por fecha si NO es la primera sincronización de la fuente
+                    if not is_initial_sync and item_date < cutoff_date:
                         continue
 
                     # 3. Content Extraction (Robust)
