@@ -40,11 +40,7 @@ class SourceResponse(SourceBase):
     """Response schema for a news source."""
 
     id: int
-
-    class Config:
-        """Pydantic configuration for the Source schema."""
-
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SourceTestRequest(BaseModel):

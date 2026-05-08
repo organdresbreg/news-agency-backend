@@ -8,7 +8,8 @@ Saves to: title and content_snippet columns
 import feedparser
 import requests
 from sqlmodel import Session
-from app.models.newsroom import Source, NewsItem
+from app.models.news import NewsItem
+from app.models.sources import Source
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as dateutil_parser
 from langdetect import detect

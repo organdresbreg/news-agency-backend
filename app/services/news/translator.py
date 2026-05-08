@@ -9,10 +9,10 @@ import json
 import time
 from typing import List, Dict, Any
 from sqlmodel import Session
-from app.models.newsroom import NewsItem
+from app.models.news import NewsItem
 from langdetect import detect, LangDetectException
 from groq import Groq
-from app.services.newsroom import extractor
+from app.services.news import extractor
 from app.core.logging import logger
 
 
@@ -219,18 +219,7 @@ def process_pending_translations(db: Session, item_ids: List[int] = None) -> int
 
         db.commit()
 
-        # --- Automatic Entity Extraction ---
-        # The moment a batch is translated, we process its entities
-        batch_ids = [item.id for item in current_batch]
-        try:
-            extractor.process_pending_entities(db, item_ids=batch_ids)
-        except Exception as e:
-            logger.exception(
-                "auto_extraction_failed",
-                batch_ids=batch_ids,
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
+        # --- Automatic Entity Extraction (Removed from here, moved to end of process) ---
 
         # 4. Partial Summary after each batch
         logger.info(

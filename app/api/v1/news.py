@@ -1,4 +1,4 @@
-"""Newsroom API endpoints for managing sources, news items, and entities."""
+"""News API endpoints for managing sources, news items, and entities."""
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 
@@ -11,9 +11,15 @@ import requests
 import feedparser
 
 from app.services.database import database_service
-from app.models.newsroom import Source, NewsItem, Entity, EntityType, AgentConfig
-from app.schemas import newsroom as schemas
-from app.services.newsroom import ingestor, translator, extractor
+from app.models.news import NewsItem
+from app.models.sources import Source
+from app.models.entities import Entity, EntityType
+from app.models.config import AgentConfig
+from app.schemas import news as news_schemas
+from app.schemas import sources as sources_schemas
+from app.schemas import entities as entities_schemas
+from app.schemas import config as config_schemas
+from app.services.news import ingestor, translator, extractor
 from app.core.logging import logger
 
 router = APIRouter()
@@ -33,8 +39,10 @@ def auto_translate_background(new_item_ids: List[int]):
     with database_service.get_session_maker() as db:
         try:
             logger.info("auto_translate_background_started", count=len(new_item_ids))
-            count = translator.process_pending_translations(db, new_item_ids)
-            logger.info("auto_translate_background_completed", count=count)
+            translator.process_pending_translations(db, new_item_ids)
+            # Trigger extraction ONLY AFTER translation is done
+            extractor.process_extraction_pipeline(db, new_item_ids)
+            logger.info("auto_translate_and_extract_background_completed")
         except Exception as e:
             logger.exception(
                 "auto_translate_background_failed",
@@ -44,31 +52,16 @@ def auto_translate_background(new_item_ids: List[int]):
             )
 
 
-def auto_extract_entities_background():
-    """Helper to extract entities from translated items (if any left)."""
+def auto_process_entities_background():
+    """Helper to process all pending entities in two phases (Fast SpaCy then Slow LLM)."""
     with database_service.get_session_maker() as db:
         try:
-            count = extractor.process_pending_entities(db)
-            if count > 0:
-                logger.info("auto_extract_entities_completed", count=count)
+            # This calls the refactored pipeline in extractor.py
+            extractor.process_extraction_pipeline(db)
+            logger.info("auto_process_entities_completed")
         except Exception as e:
             logger.exception(
-                "auto_extract_entities_failed",
-                error_type=type(e).__name__,
-                error_message=str(e),
-            )
-
-
-def auto_extract_native_background():
-    """Helper to extract entities from native Spanish items."""
-    with database_service.get_session_maker() as db:
-        try:
-            count = extractor.process_native_pending(db)
-            if count > 0:
-                logger.info("auto_extract_native_completed", count=count)
-        except Exception as e:
-            logger.exception(
-                "auto_extract_native_failed",
+                "auto_process_entities_failed",
                 error_type=type(e).__name__,
                 error_message=str(e),
             )
@@ -87,7 +80,9 @@ async def get_status():
 async def get_dashboard_stats(db: Session = Depends(get_db)):
     """Returns basic statistics for the dashboard."""
     sources_count = db.query(Source).count()
-    active_news_count = db.query(NewsItem).filter(NewsItem.status == "DISCOVERED").count()
+    active_news_count = (
+        db.query(NewsItem).filter(NewsItem.status.in_(["DISCOVERED", "EXTRACTING", "REFINING", "PROCESSED"])).count()
+    )
     return {"active_news": active_news_count, "sources_count": sources_count}
 
 
@@ -98,26 +93,25 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
 def scan_sources(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Triggers a scan of all active sources to ingest new content."""
     count, new_ids = ingestor.process_feeds(db)
-    background_tasks.add_task(auto_extract_native_background)
     if new_ids:
         background_tasks.add_task(auto_translate_background, new_ids)
     return {"new_items": count, "new_item_ids": new_ids}
 
 
-@router.get("/news/discovered", response_model=List[schemas.NewsItemResponse])
+@router.get("/news/discovered", response_model=List[news_schemas.NewsItemResponse])
 def get_discovered_news(db: Session = Depends(get_db)):
     """Retrieves all news items with 'DISCOVERED' status."""
     return (
         db.query(NewsItem)
         .options(joinedload(NewsItem.source), joinedload(NewsItem.entities))
-        .filter(NewsItem.status == "DISCOVERED")
+        .filter(NewsItem.status.in_(["DISCOVERED", "EXTRACTING", "REFINING", "PROCESSED"]))
         .order_by(NewsItem.published_date.desc())
         .all()
     )
 
 
-@router.put("/news/{news_id}/status", response_model=schemas.NewsItemResponse)
-def update_news_status(news_id: int, status_update: schemas.NewsItemStatusUpdate, db: Session = Depends(get_db)):
+@router.put("/news/{news_id}/status", response_model=news_schemas.NewsItemResponse)
+def update_news_status(news_id: int, status_update: news_schemas.NewsItemStatusUpdate, db: Session = Depends(get_db)):
     """Updates the status of a news item."""
     item = db.query(NewsItem).filter(NewsItem.id == news_id).first()
     if not item:
@@ -128,7 +122,7 @@ def update_news_status(news_id: int, status_update: schemas.NewsItemStatusUpdate
     return item
 
 
-@router.get("/news/rejected", response_model=List[schemas.NewsItemResponse])
+@router.get("/news/rejected", response_model=List[news_schemas.NewsItemResponse])
 def get_rejected_news(db: Session = Depends(get_db)):
     """Retrieves all news items with 'REJECTED' status."""
     return (
@@ -161,7 +155,7 @@ def empty_trash(db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@router.put("/news/{news_id}/restore", response_model=schemas.NewsItemResponse)
+@router.put("/news/{news_id}/restore", response_model=news_schemas.NewsItemResponse)
 def restore_news_item(news_id: int, db: Session = Depends(get_db)):
     """Restores a rejected news item to 'DISCOVERED' status."""
     item = db.query(NewsItem).filter(NewsItem.id == news_id).first()
@@ -174,7 +168,7 @@ def restore_news_item(news_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/news/batch/delete")
-def batch_delete_news(request: schemas.BatchIdRequest, db: Session = Depends(get_db)):
+def batch_delete_news(request: news_schemas.BatchIdRequest, db: Session = Depends(get_db)):
     """Soft-deletes multiple news items by moving them to the archive."""
     db.query(NewsItem).filter(NewsItem.id.in_(request.ids)).update(
         {NewsItem.status: "ARCHIVED"}, synchronize_session=False
@@ -184,7 +178,7 @@ def batch_delete_news(request: schemas.BatchIdRequest, db: Session = Depends(get
 
 
 @router.post("/news/batch/restore")
-def batch_restore_news(request: schemas.BatchIdRequest, db: Session = Depends(get_db)):
+def batch_restore_news(request: news_schemas.BatchIdRequest, db: Session = Depends(get_db)):
     """Restores multiple news items in a single request."""
     db.query(NewsItem).filter(NewsItem.id.in_(request.ids)).update(
         {NewsItem.status: "DISCOVERED"}, synchronize_session=False
@@ -196,7 +190,7 @@ def batch_restore_news(request: schemas.BatchIdRequest, db: Session = Depends(ge
 # --- Archive Operations (Physical Deletion) ---
 
 
-@router.get("/news/archived", response_model=List[schemas.NewsItemResponse])
+@router.get("/news/archived", response_model=List[news_schemas.NewsItemResponse])
 def get_archived_news(db: Session = Depends(get_db)):
     """Retrieves all news items with 'ARCHIVED' status."""
     return (
@@ -211,9 +205,20 @@ def get_archived_news(db: Session = Depends(get_db)):
 @router.delete("/news/archived/all")
 def empty_archive(db: Session = Depends(get_db)):
     """Physically deletes all archived news items."""
+    # 1. Obtener IDs de las noticias archivadas
+    archived_items = db.query(NewsItem.id).filter(NewsItem.status == "ARCHIVED").all()
+    archived_ids = [item.id for item in archived_items]
+
+    if not archived_ids:
+        return {"ok": True, "count": 0}
+
+    # 2. Borrar relaciones con entidades primero
+    db.execute(text("DELETE FROM news_entities WHERE news_id IN :ids"), {"ids": tuple(archived_ids)})
+
+    # 3. Borrar las noticias
     db.query(NewsItem).filter(NewsItem.status == "ARCHIVED").delete(synchronize_session=False)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "count": len(archived_ids)}
 
 
 @router.delete("/news/archived/{news_id}")
@@ -222,14 +227,24 @@ def purge_archived_news(news_id: int, db: Session = Depends(get_db)):
     item = db.query(NewsItem).filter(NewsItem.id == news_id, NewsItem.status == "ARCHIVED").first()
     if not item:
         raise HTTPException(status_code=404, detail="Archived news item not found")
+
+    # Borrar relaciones primero
+    db.execute(text("DELETE FROM news_entities WHERE news_id = :id"), {"id": news_id})
+
     db.delete(item)
     db.commit()
     return {"ok": True}
 
 
 @router.post("/news/archived/batch/delete")
-def batch_purge_archived_news(request: schemas.BatchIdRequest, db: Session = Depends(get_db)):
+def batch_purge_archived_news(request: news_schemas.BatchIdRequest, db: Session = Depends(get_db)):
     """Physically deletes multiple archived news items."""
+    if not request.ids:
+        return {"ok": True, "count": 0}
+
+    # Borrar relaciones primero
+    db.execute(text("DELETE FROM news_entities WHERE news_id IN :ids"), {"ids": tuple(request.ids)})
+
     db.query(NewsItem).filter(NewsItem.id.in_(request.ids), NewsItem.status == "ARCHIVED").delete(
         synchronize_session=False
     )
@@ -237,27 +252,17 @@ def batch_purge_archived_news(request: schemas.BatchIdRequest, db: Session = Dep
     return {"ok": True, "count": len(request.ids)}
 
 
-@router.post("/extract-entities")
-def trigger_extract_entities(db: Session = Depends(get_db)):
-    """Manually triggers entity extraction on pending news items."""
-    try:
-        count = extractor.process_pending_entities(db)
-        return {"extracted_count": count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # --- Entity Types ---
 
 
-@router.get("/entity-types", response_model=List[schemas.EntityTypeResponse])
+@router.get("/entity-types", response_model=List[entities_schemas.EntityTypeResponse])
 def read_entity_types(db: Session = Depends(get_db)):
     """Retrieves all available entity types."""
     return db.query(EntityType).all()
 
 
-@router.post("/entity-types", response_model=schemas.EntityTypeResponse)
-def create_entity_type(entity_type: schemas.EntityTypeCreate, db: Session = Depends(get_db)):
+@router.post("/entity-types", response_model=entities_schemas.EntityTypeResponse)
+def create_entity_type(entity_type: entities_schemas.EntityTypeCreate, db: Session = Depends(get_db)):
     """Creates a new entity type."""
     existing = db.query(EntityType).filter(EntityType.name.ilike(entity_type.name)).first()
     if existing:
@@ -273,8 +278,8 @@ def create_entity_type(entity_type: schemas.EntityTypeCreate, db: Session = Depe
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/entity-types/{type_id}", response_model=schemas.EntityTypeResponse)
-def update_entity_type(type_id: int, entity_type: schemas.EntityTypeCreate, db: Session = Depends(get_db)):
+@router.put("/entity-types/{type_id}", response_model=entities_schemas.EntityTypeResponse)
+def update_entity_type(type_id: int, entity_type: entities_schemas.EntityTypeCreate, db: Session = Depends(get_db)):
     """Updates an existing entity type."""
     db_type = db.query(EntityType).filter(EntityType.id == type_id).first()
     if not db_type:
@@ -303,7 +308,7 @@ def delete_entity_type(type_id: int, db: Session = Depends(get_db)):
 # --- Entities ---
 
 
-@router.get("/entities", response_model=List[schemas.EntityResponse])
+@router.get("/entities", response_model=List[entities_schemas.EntityResponse])
 def read_entities(skip: int = 0, limit: int = 100, include_ignored: bool = False, db: Session = Depends(get_db)):
     """Retrieves a list of entities."""
     query = db.query(Entity).options(joinedload(Entity.sources))
@@ -313,8 +318,8 @@ def read_entities(skip: int = 0, limit: int = 100, include_ignored: bool = False
     return query.offset(skip).limit(limit).all()
 
 
-@router.post("/entities", response_model=schemas.EntityResponse)
-def create_entity(entity: schemas.EntityCreate, db: Session = Depends(get_db)):
+@router.post("/entities", response_model=entities_schemas.EntityResponse)
+def create_entity(entity: entities_schemas.EntityCreate, db: Session = Depends(get_db)):
     """Creates a new entity."""
     db_entity = Entity(name=entity.name, type=entity.type)
     if hasattr(entity, "description") and entity.description:
@@ -334,8 +339,8 @@ def create_entity(entity: schemas.EntityCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/entities/{entity_id}", response_model=schemas.EntityResponse)
-def update_entity(entity_id: int, entity: schemas.EntityCreate, db: Session = Depends(get_db)):
+@router.put("/entities/{entity_id}", response_model=entities_schemas.EntityResponse)
+def update_entity(entity_id: int, entity: entities_schemas.EntityCreate, db: Session = Depends(get_db)):
     """Updates an existing entity."""
     db_entity = db.query(Entity).filter(Entity.id == entity_id).first()
     if db_entity is None:
